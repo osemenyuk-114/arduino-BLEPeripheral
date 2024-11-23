@@ -13,6 +13,11 @@
 #define DEFAULT_DEVICE_NAME "Arduino"
 #define DEFAULT_APPEARANCE  0x0000
 
+#define DEFAULT_PPCP_minimumConnectionInterval 80      //  100 ms
+#define DEFAULT_PPCP_maximumConnectionInterval 160     //  200 ms
+#define DEFAULT_PPCP_slaveLatency 0
+#define DEFAULT_PPCP_connectionSupervisionTimeout 1000 // 1000 ms
+
 BLEPeripheral::BLEPeripheral(unsigned char req, unsigned char rdy, unsigned char rst) :
 #if defined(NRF51) || defined(NRF52) || defined(__RFduino__)
   _nRF51822(),
@@ -26,6 +31,17 @@ BLEPeripheral::BLEPeripheral(unsigned char req, unsigned char rdy, unsigned char
   _manufacturerDataLength(0),
   _localName(NULL),
 
+  _minimumConnectionInterval(0),
+  _maximumConnectionInterval(0),
+  _hasConnectionInterval(false),
+  _txPower(0),
+  _hastxPower(false),
+  _PPCP_minimumConnectionInterval(0),
+  _PPCP_maximumConnectionInterval(0),
+  _PPCP_slaveLatency(0),
+  _PPCP_connectionSupervisionTimeout(0),
+  _rssi(127),
+
   _localAttributes(NULL),
   _numLocalAttributes(0),
   _remoteAttributes(NULL),
@@ -34,8 +50,11 @@ BLEPeripheral::BLEPeripheral(unsigned char req, unsigned char rdy, unsigned char
   _genericAccessService("1800"),
   _deviceNameCharacteristic("2a00", BLERead, 19),
   _appearanceCharacteristic("2a01", BLERead, 2),
+  
+  _PPCPCharacteristic("2a04", BLERead, 8),
+
   _genericAttributeService("1801"),
-  _servicesChangedCharacteristic("2a05", BLEIndicate, 4),
+//_servicesChangedCharacteristic("2a05", BLEIndicate, 4), // removed
 
   _remoteGenericAttributeService("1801"),
   _remoteServicesChangedCharacteristic("2a05", BLEIndicate),
@@ -52,6 +71,8 @@ BLEPeripheral::BLEPeripheral(unsigned char req, unsigned char rdy, unsigned char
 
   this->setDeviceName(DEFAULT_DEVICE_NAME);
   this->setAppearance(DEFAULT_APPEARANCE);
+
+  this->setPPCP(DEFAULT_PPCP_minimumConnectionInterval, DEFAULT_PPCP_maximumConnectionInterval, DEFAULT_PPCP_slaveLatency, DEFAULT_PPCP_connectionSupervisionTimeout);
 
   this->_device->setEventListener(this);
 }
@@ -72,11 +93,15 @@ void BLEPeripheral::begin() {
   unsigned char advertisementDataSize = 0;
 
   BLEEirData advertisementData[3];
-  BLEEirData scanData;
 
-  scanData.length = 0;
+  unsigned char scanDataSize = 0; //scanData.length = 0; // changed
+
+  BLEEirData scanData[3]; // BLEEirData scanData; // changed
 
   unsigned char remainingAdvertisementDataLength = BLE_ADVERTISEMENT_DATA_MAX_VALUE_LENGTH + 2;
+
+  unsigned char remainingscanDataLength = BLE_SCAN_DATA_MAX_VALUE_LENGTH + 2;
+
   if (this->_serviceSolicitationUuid){
     BLEUuid serviceSolicitationUuid = BLEUuid(this->_serviceSolicitationUuid);
 
@@ -118,17 +143,50 @@ void BLEPeripheral::begin() {
     }
   }
 
-  if (this->_localName){
+  if (this->_localName){ // changed
     unsigned char localNameLength = strlen(this->_localName);
-    scanData.length = localNameLength;
 
-    if (scanData.length > BLE_SCAN_DATA_MAX_VALUE_LENGTH) {
-      scanData.length = BLE_SCAN_DATA_MAX_VALUE_LENGTH;
+    if (localNameLength > BLE_SCAN_DATA_MAX_VALUE_LENGTH) {
+      localNameLength = BLE_SCAN_DATA_MAX_VALUE_LENGTH;
     }
 
-    scanData.type = (localNameLength > scanData.length) ? 0x08 : 0x09;
+    scanData[scanDataSize].length = localNameLength;
+    scanData[scanDataSize].type = (localNameLength == BLE_SCAN_DATA_MAX_VALUE_LENGTH) ? 0x08 : 0x09;
 
-    memcpy(scanData.data, this->_localName, scanData.length);
+    memcpy(scanData[scanDataSize].data, this->_localName, localNameLength);
+    scanDataSize += 1;
+    remainingscanDataLength -= localNameLength + 2;
+  }
+  
+  if (this->_hasConnectionInterval) {
+    
+    unsigned char ConnectionIntervalDataLength = sizeof(this->_minimumConnectionInterval) + sizeof(this->_maximumConnectionInterval);
+    if (ConnectionIntervalDataLength + 2 <= remainingscanDataLength) {
+      uint8_t ConnectionIntervalData[ConnectionIntervalDataLength];
+      memcpy(ConnectionIntervalData, &this->_minimumConnectionInterval, sizeof(this->_minimumConnectionInterval));
+      memcpy(&ConnectionIntervalData[sizeof(this->_minimumConnectionInterval)], &this->_maximumConnectionInterval, sizeof(this->_maximumConnectionInterval));
+
+      scanData[scanDataSize].length = ConnectionIntervalDataLength;
+      scanData[scanDataSize].type = 0x12;
+
+      memcpy(scanData[scanDataSize].data, ConnectionIntervalData, ConnectionIntervalDataLength); 
+
+      scanDataSize += 1;
+      remainingscanDataLength -= ConnectionIntervalDataLength + 2;
+    }
+  }
+
+  if (this->_hastxPower) {
+    unsigned char advertisedtxPower = (unsigned char)this->_txPower;
+    if (sizeof(advertisedtxPower) + 2 <= remainingscanDataLength) {
+
+      scanData[scanDataSize].length = sizeof(advertisedtxPower);
+      scanData[scanDataSize].type = 0x0A;
+      scanData[scanDataSize].data[0] = advertisedtxPower;
+
+      scanDataSize += 1;
+      remainingscanDataLength -= sizeof(advertisedtxPower) + 2;
+    }
   }
 
   if (this->_localAttributes == NULL) {
@@ -159,7 +217,7 @@ void BLEPeripheral::begin() {
   }
 
   this->_device->begin(advertisementDataSize, advertisementData,
-                        scanData.length > 0 ? 1 : 0, &scanData,
+                     	scanDataSize, scanData, // scanData.length > 0 ? 1 : 0, &scanData, // changed
                         this->_localAttributes, this->_numLocalAttributes,
                         this->_remoteAttributes, this->_numRemoteAttributes);
 
@@ -191,6 +249,17 @@ void BLEPeripheral::setLocalName(const char* localName) {
   this->_localName = localName;
 }
 
+void BLEPeripheral::setAdvertisedConnectionInterval(unsigned short minimumConnectionInterval, unsigned short maximumConnectionInterval) {
+  this->_minimumConnectionInterval = minimumConnectionInterval;
+  this->_maximumConnectionInterval = maximumConnectionInterval;
+  this->_hasConnectionInterval = true;
+}
+
+void BLEPeripheral::setAdvertisedTxPower(int txPower) {
+  this->_txPower = txPower;
+  this->_hastxPower = true;
+}
+
 void BLEPeripheral::setConnectable(bool connectable) {
   this->_device->setConnectable(connectable);
 }
@@ -209,6 +278,13 @@ void BLEPeripheral::setDeviceName(const char* deviceName) {
 
 void BLEPeripheral::setAppearance(unsigned short appearance) {
   this->_appearanceCharacteristic.setValue((unsigned char *)&appearance, sizeof(appearance));
+}
+
+void BLEPeripheral::setPPCP(unsigned short minimumConnectionInterval, unsigned short maximumConnectionInterval, unsigned short slaveLatency, unsigned short connectionSupervisionTimeout) {
+  unsigned short PPCPData[] = { minimumConnectionInterval, maximumConnectionInterval, slaveLatency, connectionSupervisionTimeout };
+
+  this->_PPCPCharacteristic.setValue((unsigned char *)&PPCPData, sizeof(PPCPData));
+  this->_device->setPPCP(minimumConnectionInterval, maximumConnectionInterval, slaveLatency, connectionSupervisionTimeout);
 }
 
 void BLEPeripheral::addAttribute(BLELocalAttribute& attribute) {
@@ -261,6 +337,16 @@ void BLEPeripheral::setEventHandler(BLEPeripheralEvent event, BLEPeripheralEvent
   if (event < sizeof(this->_eventHandlers)) {
     this->_eventHandlers[event] = eventHandler;
   }
+}
+
+signed char BLEPeripheral::rssi() {
+  this->_device->requestRssi();
+  return this->_rssi;
+}
+
+void BLEPeripheral::address(unsigned char address[6]) {
+  // this->_device->requestAddress();
+  memcpy(address, this->_address, 6);
 }
 
 bool BLEPeripheral::characteristicValueChanged(BLECharacteristic& characteristic) {
@@ -375,7 +461,10 @@ void BLEPeripheral::BLEDeviceRemoteCharacteristicValueChanged(BLEDevice& /*devic
   remoteCharacteristic.setValue(this->_central, value, valueLength);
 }
 
-void BLEPeripheral::BLEDeviceAddressReceived(BLEDevice& /*device*/, const unsigned char* /*address*/) {
+void BLEPeripheral::BLEDeviceAddressReceived(BLEDevice& /*device*/, const unsigned char* address) {
+  
+  memcpy(this->_address, address, 6);
+
 #ifdef BLE_PERIPHERAL_DEBUG
   char addressStr[18];
 
@@ -392,6 +481,16 @@ void BLEPeripheral::BLEDeviceTemperatureReceived(BLEDevice& /*device*/, float /*
 void BLEPeripheral::BLEDeviceBatteryLevelReceived(BLEDevice& /*device*/, float /*batteryLevel*/) {
 }
 
+void BLEPeripheral::BLEDeviceRssiReceived(BLEDevice& /*device*/, signed char rssi) {
+  
+  this->_rssi = rssi;
+
+#ifdef BLE_PERIPHERAL_DEBUG
+  Serial.print(F("RSSI: "));
+  Serial.println(rssi, DEC);
+#endif
+}
+
 void BLEPeripheral::initLocalAttributes() {
   this->_localAttributes = (BLELocalAttribute**)malloc(BLELocalAttribute::numAttributes() * sizeof(BLELocalAttribute*));
 
@@ -399,8 +498,10 @@ void BLEPeripheral::initLocalAttributes() {
   this->_localAttributes[1] = &this->_deviceNameCharacteristic;
   this->_localAttributes[2] = &this->_appearanceCharacteristic;
 
-  this->_localAttributes[3] = &this->_genericAttributeService;
-  this->_localAttributes[4] = &this->_servicesChangedCharacteristic;
+  this->_localAttributes[3] = &this->_PPCPCharacteristic;
+
+  this->_localAttributes[4] = &this->_genericAttributeService;
+//this->_localAttributes[5] = &this->_servicesChangedCharacteristic; // removed
 
   this->_numLocalAttributes = 5;
 }

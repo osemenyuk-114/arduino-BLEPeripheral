@@ -14,7 +14,13 @@ BLEDevice::BLEDevice() :
   _maximumConnectionInterval(0),
   _connectable(DEFAULT_CONNECTABLE),
   _bondStore(NULL),
-  _eventListener(NULL)
+  _eventListener(NULL),
+
+  _PPCP_minimumConnectionInterval(0),
+  _PPCP_maximumConnectionInterval(0),
+  _PPCP_slaveLatency(0),
+  _PPCP_connectionSupervisionTimeout(0)
+
 {
 }
 
@@ -44,4 +50,11 @@ void BLEDevice::setConnectable(bool connectable) {
 
 void BLEDevice::setBondStore(BLEBondStore& bondStore) {
   this->_bondStore = &bondStore;
+}
+
+void BLEDevice::setPPCP(unsigned short minimumConnectionInterval, unsigned short maximumConnectionInterval, unsigned short slaveLatency, unsigned short connectionSupervisionTimeout) {
+  this->_PPCP_minimumConnectionInterval = minimumConnectionInterval;
+  this->_PPCP_maximumConnectionInterval = maximumConnectionInterval;
+  this->_PPCP_slaveLatency = slaveLatency;
+  this->_PPCP_connectionSupervisionTimeout = connectionSupervisionTimeout;
 }

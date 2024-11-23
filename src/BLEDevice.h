@@ -37,6 +37,9 @@ class BLEDeviceEventListener
     virtual void BLEDeviceAddressReceived(BLEDevice& /*device*/, const unsigned char* /*address*/) { }
     virtual void BLEDeviceTemperatureReceived(BLEDevice& /*device*/, float /*temperature*/) { }
     virtual void BLEDeviceBatteryLevelReceived(BLEDevice& /*device*/, float /*batteryLevel*/) { }
+    
+    virtual void BLEDeviceRssiReceived(BLEDevice& /*device*/, signed char /*rssi*/) { }
+
 };
 
 
@@ -55,6 +58,8 @@ class BLEDevice
     void setConnectionInterval(unsigned short minimumConnectionInterval, unsigned short maximumConnectionInterval);
     void setConnectable(bool connectable);
     void setBondStore(BLEBondStore& bondStore);
+
+    void setPPCP(unsigned short minimumConnectionInterval, unsigned short maximumConnectionInterval, unsigned short slaveLatency, unsigned short connectionSupervisionTimeout);
 
     virtual void begin(unsigned char /*advertisementDataSize*/,
                 BLEEirData * /*advertisementData*/,
@@ -91,7 +96,9 @@ class BLEDevice
     virtual void requestAddress() { }
     virtual void requestTemperature() { }
     virtual void requestBatteryLevel() { }
-
+    
+    virtual void requestRssi() { }
+  
   protected:
     unsigned short                _advertisingInterval;
     unsigned short                _minimumConnectionInterval;
@@ -99,6 +106,11 @@ class BLEDevice
     bool                          _connectable;
     BLEBondStore*                 _bondStore;
     BLEDeviceEventListener*       _eventListener;
+
+    unsigned short                _PPCP_minimumConnectionInterval;
+    unsigned short                _PPCP_maximumConnectionInterval;
+    unsigned short                _PPCP_slaveLatency;
+    unsigned short                _PPCP_connectionSupervisionTimeout;
 };
 
 #endif

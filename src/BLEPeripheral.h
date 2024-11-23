@@ -72,6 +72,9 @@ class BLEPeripheral : public BLEDeviceEventListener,
     void setManufacturerData(const unsigned char manufacturerData[], unsigned char manufacturerDataLength);
     void setLocalName(const char *localName);
 
+    void setAdvertisedConnectionInterval(unsigned short minimumConnectionInterval, unsigned short maximumConnectionInterval);
+    void setAdvertisedTxPower(int txPower);
+
     void setAdvertisingInterval(unsigned short advertisingInterval);
     // connection intervals in 1.25 ms increments,
     // must be between  0x0006 (7.5 ms) and 0x0c80 (4 s), values outside of this range will be ignored
@@ -84,6 +87,8 @@ class BLEPeripheral : public BLEDeviceEventListener,
     void setDeviceName(const char* deviceName);
     void setAppearance(unsigned short appearance);
 
+    void setPPCP(unsigned short minimumConnectionInterval, unsigned short maximumConnectionInterval, unsigned short slaveLatency, unsigned short connectionSupervisionTimeout);
+
     void addAttribute(BLELocalAttribute& attribute);
     void addLocalAttribute(BLELocalAttribute& localAttribute);
     void addRemoteAttribute(BLERemoteAttribute& remoteAttribute);
@@ -94,6 +99,9 @@ class BLEPeripheral : public BLEDeviceEventListener,
     bool connected();
 
     void setEventHandler(BLEPeripheralEvent event, BLEPeripheralEventHandler eventHandler);
+
+    void address(unsigned char address[6]);
+    signed char rssi();
 
   protected:
     bool characteristicValueChanged(BLECharacteristic& characteristic);
@@ -124,6 +132,8 @@ class BLEPeripheral : public BLEDeviceEventListener,
     virtual void BLEDeviceTemperatureReceived(BLEDevice& device, float temperature);
     virtual void BLEDeviceBatteryLevelReceived(BLEDevice& device, float batteryLevel);
 
+    virtual void BLEDeviceRssiReceived(BLEDevice& device, signed char rssi);
+
   private:
     void initLocalAttributes();
 
@@ -142,6 +152,18 @@ class BLEPeripheral : public BLEDeviceEventListener,
     unsigned char                  _manufacturerDataLength;
     const char*                    _localName;
 
+    unsigned short                 _minimumConnectionInterval;
+    unsigned short                 _maximumConnectionInterval;
+    bool                           _hasConnectionInterval;
+    int                            _txPower;
+    bool                           _hastxPower;
+    unsigned short                 _PPCP_minimumConnectionInterval;
+    unsigned short                 _PPCP_maximumConnectionInterval;
+    unsigned short                 _PPCP_slaveLatency;
+    unsigned short                 _PPCP_connectionSupervisionTimeout;
+    unsigned char                  _address[6];
+    signed char                    _rssi;
+
     BLELocalAttribute**            _localAttributes;
     unsigned char                  _numLocalAttributes;
     BLERemoteAttribute**           _remoteAttributes;
@@ -150,8 +172,11 @@ class BLEPeripheral : public BLEDeviceEventListener,
     BLEService                     _genericAccessService;
     BLECharacteristic              _deviceNameCharacteristic;
     BLECharacteristic              _appearanceCharacteristic;
+    
+    BLECharacteristic              _PPCPCharacteristic;
+
     BLEService                     _genericAttributeService;
-    BLECharacteristic              _servicesChangedCharacteristic;
+//  BLECharacteristic              _servicesChangedCharacteristic; // removed
 
     BLERemoteService               _remoteGenericAttributeService;
     BLERemoteCharacteristic        _remoteServicesChangedCharacteristic;

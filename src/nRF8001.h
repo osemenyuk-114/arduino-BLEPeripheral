@@ -81,6 +81,8 @@ class nRF8001 : protected BLEDevice
     virtual void requestTemperature();
     virtual void requestBatteryLevel();
 
+    virtual void requestRssi();
+    
   private:
     void waitForSetupMode();
     void sendSetupMessage(hal_aci_data_t* data, bool withCrc = false);
@@ -108,6 +110,10 @@ class nRF8001 : protected BLEDevice
     bool                        _storeDynamicData;
 
     unsigned short              _crcSeed;
+
+    bool                        _hasSCIR;
+    bool                        _hasTxPower;
+
 };
 
 #endif

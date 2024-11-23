@@ -36,6 +36,9 @@ uint32_t sd_ble_gatts_value_set(uint16_t handle, uint16_t offset, uint16_t* cons
 }
 #endif
 
+#define BLE_GAP_RSSI_THRESHOLD 0xFF
+#define BLE_GAP_RSSI_SKIP_COUNT 0
+
 #include "Arduino.h"
 
 #include "BLEAttribute.h"
@@ -146,7 +149,7 @@ void nRF51822::begin(unsigned char advertisementDataSize,
   memset(&enableParams, 0, sizeof(ble_enable_params_t));
   enableParams.common_enable_params.vs_uuid_count   = 10;
   enableParams.gatts_enable_params.attr_tab_size    = BLE_GATTS_ATTR_TAB_SIZE;
-  enableParams.gatts_enable_params.service_changed  = 1;
+  enableParams.gatts_enable_params.service_changed  = 0; // 1 // modified
   enableParams.gap_enable_params.periph_conn_count  = 1;
   enableParams.gap_enable_params.central_conn_count = 0;
   enableParams.gap_enable_params.central_sec_count  = 0;
@@ -155,7 +158,7 @@ void nRF51822::begin(unsigned char advertisementDataSize,
 #elif defined(S110)
   ble_enable_params_t enableParams = {
       .gatts_enable_params = {
-          .service_changed = true,
+          .service_changed = false, // true // modified
           .attr_tab_size = BLE_GATTS_ATTR_TAB_SIZE
       }
   };
@@ -164,7 +167,7 @@ void nRF51822::begin(unsigned char advertisementDataSize,
 #elif defined(NRF51_S130)
   ble_enable_params_t enableParams = {
       .gatts_enable_params = {
-          .service_changed = true
+          .service_changed = false // true // modified
       }
   };
 
@@ -187,10 +190,10 @@ void nRF51822::begin(unsigned char advertisementDataSize,
 
   ble_gap_conn_params_t gap_conn_params;
 
-  gap_conn_params.min_conn_interval = 40;  // in 1.25ms units
-  gap_conn_params.max_conn_interval = 80;  // in 1.25ms unit
-  gap_conn_params.slave_latency     = 0;
-  gap_conn_params.conn_sup_timeout  = 4000 / 10; // in 10ms unit
+  gap_conn_params.min_conn_interval = this->_PPCP_minimumConnectionInterval;    // 40;  // in 1.25ms units    // modified
+  gap_conn_params.max_conn_interval = this->_PPCP_maximumConnectionInterval;    // 80;  // in 1.25ms unit     // modified
+  gap_conn_params.slave_latency     = this->_PPCP_slaveLatency;                 // 0;                         // modified
+  gap_conn_params.conn_sup_timeout  = this->_PPCP_connectionSupervisionTimeout; // 4000 / 10; // in 10ms unit // modified
 
   sd_ble_gap_ppcp_set(&gap_conn_params);
   sd_ble_gap_tx_power_set(0);
@@ -243,7 +246,7 @@ void nRF51822::begin(unsigned char advertisementDataSize,
     }
   }
 
-  this->_numLocalCharacteristics -= 3; // 0x2a00, 0x2a01, 0x2a05
+  this->_numLocalCharacteristics -= 3; // 0x2a00, 0x2a01, 0x2a04 // 0x2a05 // modified
 
   this->_localCharacteristicInfo = (struct localCharacteristicInfo*)malloc(sizeof(struct localCharacteristicInfo) * this->_numLocalCharacteristics);
 
@@ -291,14 +294,14 @@ void nRF51822::begin(unsigned char advertisementDataSize,
 
       if (strcmp(characteristic->uuid(), "2a00") == 0) {
         ble_gap_conn_sec_mode_t secMode;
-        BLE_GAP_CONN_SEC_MODE_SET_OPEN(&secMode); // no security is needed
+     	BLE_GAP_CONN_SEC_MODE_SET_NO_ACCESS(&secMode); // set the name to read-only // BLE_GAP_CONN_SEC_MODE_SET_OPEN(&secMode); // no security is needed // changed
 
         sd_ble_gap_device_name_set(&secMode, characteristic->value(), characteristic->valueLength());
       } else if (strcmp(characteristic->uuid(), "2a01") == 0) {
         const uint16_t *appearance = (const uint16_t*)characteristic->value();
 
         sd_ble_gap_appearance_set(*appearance);
-      } else if (strcmp(characteristic->uuid(), "2a05") == 0) {
+      } else if (strcmp(characteristic->uuid(), "2a04") == 0) { // "2a05"  // changed
         // do nothing
       } else {
         uint8_t properties = characteristic->properties() & 0xfe;
@@ -573,7 +576,7 @@ void nRF51822::poll() {
           gap_conn_params.min_conn_interval = this->_minimumConnectionInterval;  // in 1.25ms units
           gap_conn_params.max_conn_interval = this->_maximumConnectionInterval;  // in 1.25ms unit
           gap_conn_params.slave_latency     = 0;
-          gap_conn_params.conn_sup_timeout  = 4000 / 10; // in 10ms unit
+          gap_conn_params.conn_sup_timeout  = 10000 / 10; // 4000 / 10; // in 10ms unit // modified
 
           sd_ble_gap_conn_param_update(this->_connectionHandle, &gap_conn_params);
         }
@@ -581,12 +584,20 @@ void nRF51822::poll() {
         if (this->_numRemoteServices > 0) {
           sd_ble_gattc_primary_services_discover(this->_connectionHandle, 1, NULL);
         }
+
+        sd_ble_gap_rssi_start(this->_connectionHandle, BLE_GAP_RSSI_THRESHOLD , BLE_GAP_RSSI_SKIP_COUNT);
         break;
 
       case BLE_GAP_EVT_DISCONNECTED:
 #ifdef NRF_51822_DEBUG
         Serial.println(F("Evt Disconnected"));
 #endif
+        sd_ble_gap_rssi_stop(this->_connectionHandle);
+		
+		if (this->_eventListener) {
+          this->_eventListener->BLEDeviceRssiReceived(*this, 127);
+        }
+        
         this->_connectionHandle = BLE_CONN_HANDLE_INVALID;
         this->_txBufferCount = 0;
 
@@ -782,6 +793,19 @@ void nRF51822::poll() {
         Serial.println();
 #endif
         break;
+
+#if (BLE_GAP_RSSI_THRESHOLD != BLE_GAP_RSSI_THRESHOLD_INVALID) || defined(__RFduino__)
+      case BLE_GAP_EVT_RSSI_CHANGED:
+#ifdef NRF_51822_DEBUG
+        Serial.print(F("Evt RSSI Changed: "));
+        Serial.print(bleEvt->evt.gap_evt.params.rssi_changed.rssi, DEC);
+        Serial.println();
+#endif      						 
+        if (this->_eventListener) {
+          this->_eventListener->BLEDeviceRssiReceived(*this, bleEvt->evt.gap_evt.params.rssi_changed.rssi);
+        }
+		break;
+#endif
 
       case BLE_GATTS_EVT_WRITE: {
 #ifdef NRF_51822_DEBUG
@@ -1381,6 +1405,18 @@ void nRF51822::requestTemperature() {
 }
 
 void nRF51822::requestBatteryLevel() {
+}
+
+void nRF51822::requestRssi() {
+#if (BLE_GAP_RSSI_THRESHOLD == BLE_GAP_RSSI_THRESHOLD_INVALID) && !defined(__RFduino__)
+  int8_t rssi;
+
+  if (NRF_SUCCESS == (sd_ble_gap_rssi_get(this->_connectionHandle, &rssi))) {
+    if (this->_eventListener) {
+      this->_eventListener->BLEDeviceRssiReceived(*this, rssi);
+    }
+  }
+#endif
 }
 
 #endif

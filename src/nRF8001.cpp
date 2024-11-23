@@ -58,18 +58,18 @@ static const hal_aci_data_t baseSetupMsgs[NB_BASE_SETUP_MESSAGES] /*PROGMEM*/ =
   {0x00,\
     {\
       0x1f,0x06,0x10,0x1c,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,\
-      0x00,0x00,0x00,0x00,0x00,0x00,0x10,0x00,0x03,0x90,0x00,0xff,\
+      0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x03,0x90,0x00,0xff,\
     },\
   },\
   {0x00,\
     {\
       0x1f,0x06,0x10,0x38,0xff,0xff,0x02,0x58,0x0a,0x05,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,\
-      0x10,0x00,0x00,0x00,0x00,0x00,0x01,0x02,0x01,0x02,0x01,0x02,\
+      0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,\
     },\
   },\
   {0x00,\
     {\
-      0x05,0x06,0x10,0x54,0x00,0x02,\
+      0x05,0x06,0x10,0x54,0x00,0x00,\
     },\
   },\
   {0x00,\
@@ -121,7 +121,10 @@ nRF8001::nRF8001(unsigned char req, unsigned char rdy, unsigned char rst) :
   _dynamicDataSequenceNo(0),
   _storeDynamicData(false),
 
-  _crcSeed(0xFFFF)
+  _crcSeed(0xFFFF),
+
+  _hasTxPower(false)
+
 {
   this->_aciState.aci_pins.reqn_pin               = req;
   this->_aciState.aci_pins.rdyn_pin               = rdy;
@@ -259,8 +262,12 @@ void nRF8001::begin(unsigned char advertisementDataSize,
 
   setupMsg.status_byte = 0;
 
-  bool hasAdvertisementData = advertisementDataSize && advertisementData;
+  bool hasCustom1           = (advertisementDataSize > 0) ? true : false;
+  bool hasCustom2           = (advertisementDataSize > 1) ? true : false;
+
   bool hasScanData          = scanDataSize && scanData;
+  bool hasSCIR              = (this->_minimumConnectionInterval >= ACI_PPCP_MIN_CONN_INTVL_MIN &&
+  							   this->_maximumConnectionInterval <= ACI_PPCP_MAX_CONN_INTVL_MAX) ? true : false;
 
   for (int i = 0; i < NB_BASE_SETUP_MESSAGES; i++) {
     int setupMsgSize = pgm_read_byte_near(&baseSetupMsgs[i].buffer[0]) + 2;
@@ -273,6 +280,10 @@ void nRF8001::begin(unsigned char advertisementDataSize,
       setupMsgData->data[7] = numRemotePipedCharacteristics;
       setupMsgData->data[8] = (numLocalPipes + numRemotePipes);
 
+      if (hasScanData && scanData[0].type == 0x08) {
+        setupMsgData->data[15] = scanData[0].length; // shortened local name length
+      }
+
       if (this->_bondStore) {
         setupMsgData->data[4] |= 0x02;
       }
@@ -280,36 +291,47 @@ void nRF8001::begin(unsigned char advertisementDataSize,
 #ifdef NRF_8001_ENABLE_DC_DC_CONVERTER
       setupMsgData->data[13] |= 0x01;
 #endif
-    } else if (i == 2 && hasAdvertisementData) {
-      setupMsgData->data[18] |= 0x40;
+    } else if (i == 2 && (hasCustom1 || hasCustom2)) {
 
       setupMsgData->data[22] |= 0x40;
 
       setupMsgData->data[26] = numCustomUuids;
     } else if (i == 3) {
-      if (hasAdvertisementData) {
-        setupMsgData->data[16] |= 0x40;
+      if (hasCustom1) {
+        setupMsgData->data[24] |= 0x01;
       }
-
-      if (hasScanData) {
-        setupMsgData->data[8] |= 0x40;
-
-        setupMsgData->data[12] |= 0x40;
-
-        setupMsgData->data[20] |= 0x40;
+      if (hasCustom2) {
+        setupMsgData->data[24] |= 0x02;
+      }
+      if (hasSCIR) {
+        setupMsgData->data[12] |= 0x01;
+      }
+      if (hasScanData && scanData[0].type == 0x09) {
+        setupMsgData->data[13] = 0x10; // advertise complete local name
+      } else if (hasScanData && scanData[0].type == 0x08) {
+        setupMsgData->data[13] = 0x20; // advertise shortened local name
+      }
+      if (1 /*_hasTxPower*/) {
+        setupMsgData->data[13] |= 0x40;
       }
     } else if (i == 4) {
       if (this->_bondStore) {
         setupMsgData->data[0] |= 0x01;
       }
-    } else if (i == 5 && hasAdvertisementData) {
+      if (hasCustom1) {
+        setupMsgData->data[1]++;
+      }
+      if (hasCustom2) {
+        setupMsgData->data[1]++;
+      }
+    } else if (i == 5 && hasCustom1) {
       setupMsgData->data[0] = advertisementData[0].type;
       setupMsgData->data[1] = advertisementData[0].length;
       memcpy(&setupMsgData->data[2], advertisementData[0].data, advertisementData[0].length);
-    } else if (i == 6 && hasScanData) {
-      setupMsgData->data[0] = scanData[0].type;
-      setupMsgData->data[1] = scanData[0].length;
-      memcpy(&setupMsgData->data[2], scanData[0].data, scanData[0].length);
+    } else if (i == 6 && hasCustom2) {
+      setupMsgData->data[0] = advertisementData[1].type;
+      setupMsgData->data[1] = advertisementData[1].length;
+      memcpy(&setupMsgData->data[2], advertisementData[1].data, advertisementData[1].length);
     }
 
     this->sendSetupMessage(&setupMsg);
@@ -442,7 +464,7 @@ void nRF8001::begin(unsigned char advertisementDataSize,
       if (this->_bondStore &&
           strcmp(characteristicUuid, "2a00") != 0 &&
           strcmp(characteristicUuid, "2a01") != 0 &&
-          strcmp(characteristicUuid, "2a05") != 0) {
+          strcmp(characteristicUuid, "2a04") != 0) { // "2a05" // modified
         setupMsgData->data[1] |= 0x08;
       }
 
@@ -1014,7 +1036,7 @@ void nRF8001::poll() {
             openPipes & 0x03 &&
             !this->_timingChanged) {
           this->_timingChanged = true;
-          lib_aci_change_timing(this->_minimumConnectionInterval, this->_maximumConnectionInterval, 0, 4000 / 10);
+          lib_aci_change_timing(this->_minimumConnectionInterval, this->_maximumConnectionInterval, 0, 10000 / 10); // 4000 // modified
         }
 
         bool discoveryFinished = lib_aci_is_discovery_finished(&this->_aciState);
@@ -1441,6 +1463,13 @@ void nRF8001::requestTemperature() {
 
 void nRF8001::requestBatteryLevel() {
   lib_aci_get_battery_level();
+}
+
+void nRF8001::requestRssi() {
+  signed char rssi = -43;
+  if (this->_eventListener) {
+    this->_eventListener->BLEDeviceRssiReceived(*this, rssi);
+  }
 }
 
 void nRF8001::waitForSetupMode()
